@@ -27,6 +27,7 @@ public class GunSystem {
     private LookAtTarget? loadPowderButton;
     private GunController? gunController;
     private LinearSliderInteractable? elevationLever;
+    private OdometerDisplay? remainingCharges;
 
     private TextMeshPro shellId;
 
@@ -39,6 +40,8 @@ public class GunSystem {
             MelonLogger.Error($"[FCS] GunSystem {surfix}: 找不到 --Reloading Console");
             return false;
         }
+
+        remainingCharges = reloadingConsole.GetComponentInChildren<OdometerDisplay>();
         
         nextBulletButton = 
             reloadingConsole.Find("Universal Button Move Cylinder")
@@ -161,6 +164,10 @@ public class GunSystem {
         while (!gunController.pendingReload) {
             yield return new WaitForSeconds(0.1f);
         }
+    }
+    
+    public int RemainingCharges() {
+        return (int)remainingCharges.CurrentNumber;
     }
 
 }

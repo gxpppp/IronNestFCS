@@ -187,6 +187,8 @@ public class FSC
         // 独立的 fire-and-forget 协程，必须登记以便 Dispose 时一并 Stop，
         // 否则热重载后旧 ALC 的它仍被 Unity 驱动 → 崩溃。
         _runningCoroutines.Add(MelonCoroutines.Start(ReserveTurretAndRotate(task, turret)));
+        
+        var minimumPowder = BallisticCalculator.MinimumCharge(task.distance);
 
         // ===== 临界区 1：解算 =====
         // 弹道计算器 / 确认台 / 采购台都是全局唯一硬件，必须串行。算完仰角即放，
@@ -198,10 +200,14 @@ public class FSC
             task.progress = Progress.Calculating;
             yield return BallisticCalculator.SetDistance(task.distance);
             yield return BallisticCalculator.SetDirection(task.angel);
-            yield return BallisticCalculator.SetCharge(BallisticCalculator.MinimumCharge(task.distance));
+            yield return BallisticCalculator.SetCharge(minimumPowder);
             yield return BallisticCalculator.SetShellType(task.bulletType);
             yield return BallisticCalculator.Calculate();
             elevation = BallisticCalculator.GetElevation();
+
+            if (gunSys.RemainingCharges() < minimumPowder) {
+                yield return _purchaseDeck.BuyPowders();
+            }
 
             task.progress = Progress.SelectingBullet;
             // 弹仓里没有目标弹种则采购（采购台也是共享硬件，放在锁内）。
@@ -232,10 +238,9 @@ public class FSC
         task.progress = Progress.LoadingBullet;
         yield return gunSys.LoadBullet(task.bulletType);
         
-
-        var charge = BallisticCalculator.MinimumCharge(task.distance);
+        
         task.progress = Progress.LoadingPowder;
-        yield return gunSys.LoadPowder(charge);
+        yield return gunSys.LoadPowder(minimumPowder);
         task.progress = Progress.WaitLoading;
         while (!gunSys.CanFire()) {
             yield return new WaitForSeconds(1f);

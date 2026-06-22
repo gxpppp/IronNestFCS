@@ -11,6 +11,7 @@ public class PurchaseDeck {
     private Transform? starCard;
     private Transform? smkCard;
     private Transform? hcheCard;
+    private Transform? powderCard;
     private LookAtTarget? buyButton;
     
     
@@ -34,6 +35,9 @@ public class PurchaseDeck {
                     break;
                 case "HCHEShell":
                     hcheCard = card.transform;
+                    break;
+                case "PowderCharges":
+                    powderCard = card.transform;
                     break;
                 default:
                     break;
@@ -66,7 +70,7 @@ public class PurchaseDeck {
         var target = new Vector3(6.4814f, -2.4675f, -22.0968f);
         card.position = target;
         card.GetComponent<DraggableItem>().MoveToSlot();
-        yield return new WaitForSeconds(1f);
+        yield return new WaitForSeconds(0.5f);
         
         switch (leftRight) {
             case LeftRight.Left:
@@ -76,9 +80,15 @@ public class PurchaseDeck {
                 GetLeftRightDial().SetDialValue(1);
                 break;
         }
-        yield return new WaitForSeconds(1f);
-        buyButton?.OnClickDown();
-        yield return new WaitForSeconds(1f);
+        yield return FcsSceneInteractor.WaitAndClick(buyButton);
+        yield return new WaitForSeconds(2f);
+    }
+
+    public IEnumerator BuyPowders() {
+        powderCard.position = new Vector3(6.4814f, -2.4675f, -22.0968f);
+        powderCard.GetComponent<DraggableItem>().MoveToSlot();
+        yield return FcsSceneInteractor.WaitAndClick(buyButton);
+        yield return new WaitForSeconds(2f);
     }
     
 }
