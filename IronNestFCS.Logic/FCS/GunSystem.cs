@@ -87,7 +87,7 @@ public class GunSystem {
     }
     
     public string? BulletInChamber() {
-        return gunController?.ChamberedShellBlueprint?.shellDefinition?.DisplayName;
+        return gunController?.ChamberedShellBlueprint?.shellDefinition?.ShellId;
     }
     
     public bool IsChamberEmpty() {
@@ -98,7 +98,7 @@ public class GunSystem {
         bullets.Clear();
         if (shellSelector == null) return;
         foreach (var shell in shellSelector.bullets) {
-            bullets.Add(shell?.GetComponent<ShellBlueprint>()?.shellDefinition?.DisplayName);
+            bullets.Add(shell?.GetComponent<ShellBlueprint>()?.shellDefinition?.ShellId);
         }
     }
 

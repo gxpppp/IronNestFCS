@@ -13,7 +13,7 @@ public class TriggerConsole {
     private LookAtTarget? readyFire;
     private LookAtTarget? armLeft;
     private LookAtTarget? armRight;
-    private LinearSliderInteractable? fire;
+    private SliderEnergyMomentumSpinner? fire;
 
     public bool TryBind() {
         var console = GameObject.Find(".Review Console Parent").transform;
@@ -36,17 +36,13 @@ public class TriggerConsole {
         readyFire = buttons[4];
         armLeft = GameObject.Find(".ArmingLeverParent Left").GetComponentInChildren<LookAtTarget>();
         armRight = GameObject.Find(".ArmingLeverParent Right").GetComponentInChildren<LookAtTarget>();
-        fire = GameObject.Find(".Trigger chain parent").GetComponentInChildren<LinearSliderInteractable>();
+        fire = GameObject.Find(".Trigger Core").transform.FindChild(".Generator Spinner")
+            .GetComponentInChildren<SliderEnergyMomentumSpinner>();
         return true;
     }
 
-    public IEnumerator Fire() {
-        fire.BeginSliderDrag();
-        yield return new WaitForSeconds(0.2f);
-        fire.SetSliderValue(100);
-        yield return new WaitForSeconds(0.2f);
-        fire.EndSliderDrag();
-        yield return new WaitForSeconds(0.2f);
+    public void Fire() {
+        fire.AddEnergy(255);
     }
 
     public IEnumerator Arm(LeftRight leftRight) {

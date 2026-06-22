@@ -262,7 +262,7 @@ public class FSC
             yield return TriggerConsole.ReadyToFire();
             yield return TriggerConsole.Arm(leftRight);
             if (_sceneInteractor.AutoFire) {
-                yield return TriggerConsole.Fire();
+                TriggerConsole.Fire();
             }
             yield return gunSys.WaitFire();
         }
