@@ -36,8 +36,17 @@ public class FSC
     public readonly Turret Turret = new Turret();
     public readonly TriggerConsole TriggerConsole = new();
     
-    public ArtilleryTask? LeftTask = null;
-    public ArtilleryTask? RightTask = null;
+    // ===== 任务调度 =====
+    // 用户不再指定炮管：任务入队后由调度器派给空闲炮管，炮管打完一发自动拉下一个。
+    // 所有读写都在 Unity 主线程（入队来自点击回调，派发/完成来自协程），无并发，无需锁。
+    private readonly Queue<ArtilleryTask> _taskQueue = new();
+
+    /// <summary>当前各炮管正在执行的任务；null 表示该炮管空闲。供 UI 显示与调度判断。</summary>
+    public ArtilleryTask? LeftTask { get; private set; }
+    public ArtilleryTask? RightTask { get; private set; }
+
+    /// <summary>等待派发的任务数（已入队但还没分到炮管）。供 UI 显示。</summary>
+    public int PendingCount => _taskQueue.Count;
 
     /// <summary>
     /// 控制台互斥锁：保护弹道计算器、确认开关台、采购台这三组全局唯一的"短操作"硬件。
@@ -98,6 +107,11 @@ public class FSC
         }
         _runningCoroutines.Clear();
 
+        // 清空调度状态，避免热重载后残留任务/槽位影响新一轮绑定。
+        _taskQueue.Clear();
+        LeftTask = null;
+        RightTask = null;
+
         _sceneInteractor.ShutDown();
         try { _harmony?.UnpatchSelf(); }
         catch (Exception ex) { MelonLogger.Error($"[FCS] UnpatchSelf 失败: {ex}"); }
@@ -105,21 +119,51 @@ public class FSC
     }
 
     /// <summary>
-    /// 启动一个火控任务。用 MelonCoroutines 跑协程实现延时——
+    /// 把任务加入调度队列。用户不指定炮管——调度器自动派给空闲炮管。
+    /// 入队后立即尝试派发；若两管炮都忙，任务留在队列里，等某管炮打完自动拉取。
+    /// 必须在主线程调用（点击回调即是）。
+    /// </summary>
+    public void EnqueueTask(ArtilleryTask task) {
+        task.progress = Progress.Pending;
+        _taskQueue.Enqueue(task);
+        TryDispatch();
+    }
+
+    /// <summary>把队首任务派给空闲炮管，直到没有空闲炮管或队列空。</summary>
+    private void TryDispatch() {
+        while (_taskQueue.Count > 0) {
+            LeftRight slot;
+            if (LeftTask == null) slot = LeftRight.Left;
+            else if (RightTask == null) slot = LeftRight.Right;
+            else break; // 两管炮都忙
+
+            var task = _taskQueue.Dequeue();
+            if (slot == LeftRight.Left) LeftTask = task;
+            else RightTask = task;
+            StartTaskRoutine(slot, task);
+        }
+    }
+
+    /// <summary>
+    /// 启动一个火控任务协程。用 MelonCoroutines 跑协程实现延时——
     /// 协程由 Unity 在主线程分帧驱动，yield 期间不阻塞、恢复后仍在主线程，
     /// 因此可安全访问 IL2CPP 对象。绝不能用 async/Task.Delay：其 continuation
     /// 会在线程池线程恢复，跨线程访问 IL2CPP 运行时会导致进程崩溃且无日志。
     /// </summary>
-    public void RunTask(LeftRight leftRight) {
-        var handle = MelonCoroutines.Start(RunTaskRoutine(leftRight));
+    private void StartTaskRoutine(LeftRight leftRight, ArtilleryTask task) {
+        var handle = MelonCoroutines.Start(RunTaskRoutine(leftRight, task));
         _runningCoroutines.Add(handle);
     }
 
-    private IEnumerator RunTaskRoutine(LeftRight leftRight) {
+    /// <summary>炮管打完一发后释放槽位并尝试拉取队列里的下一个任务。</summary>
+    private void ReleaseSlot(LeftRight leftRight) {
+        if (leftRight == LeftRight.Left) LeftTask = null;
+        else RightTask = null;
+        TryDispatch();
+    }
+
+    private IEnumerator RunTaskRoutine(LeftRight leftRight, ArtilleryTask task) {
         var gunSys = leftRight == LeftRight.Left ? LeftGun : RightGun;
-        var task = leftRight == LeftRight.Left ? LeftTask : RightTask;
-        if (task == null)
-            yield break;
 
         // ===== 炮塔预约：任务一开始就在后台抢方向角并转向 =====
         // 方向旋转和装填/升仰角互不冲突。后台协程阻塞式抢炮塔锁（"一旦释放就立即获取"），
@@ -163,9 +207,11 @@ public class FSC
         }
 
         if (!viable) {
-            // 任务不可行：取消炮塔预约并归还（后台若尚未抢到，会在抢到后自行归还）。
+            // 任务不可行：取消炮塔预约并归还（后台若尚未抢到，会在抢到后自行归还），
+            // 并释放炮管槽位让队列里的下一个任务能用这管炮。
             turret.Canceled = true;
             ReleaseTurretOnce(turret);
+            ReleaseSlot(leftRight);
             yield break;
         }
 
@@ -177,7 +223,7 @@ public class FSC
         var charge = BallisticCalculator.MinimumCharge(task.distance);
         task.progress = Progress.LoadingPowder;
         yield return gunSys.LoadPowder(charge);
-        task.progress = Progress.WaitLoadingFinished;
+        task.progress = Progress.WaitLoading;
         while (!gunSys.CanFire()) {
             yield return new WaitForSeconds(1f);
         }
@@ -202,7 +248,9 @@ public class FSC
             yield return TriggerConsole.ConfirmElevation();
             yield return TriggerConsole.ReadyToFire();
             yield return TriggerConsole.Arm(leftRight);
-            yield return TriggerConsole.Fire();
+            if (_sceneInteractor.AutoFire) {
+                yield return TriggerConsole.Fire();
+            }
             yield return gunSys.WaitFire();
         }
         finally {
@@ -210,10 +258,12 @@ public class FSC
         }
 
         // ===== 锁外：回位（仰角回 0，每管炮独立，最耗时段之一）=====
-        task.progress = Progress.WaitingForBackToIdle;
+        task.progress = Progress.BackToIdle;
         yield return gunSys.WaitBackToIdle();
         task.progress = Progress.Finished;
-        _sceneInteractor.TaskFinished(leftRight);
+        _sceneInteractor.TaskFinished(task);
+        // 释放炮管槽位，自动拉取队列里的下一个任务。
+        ReleaseSlot(leftRight);
     }
 
     /// <summary>

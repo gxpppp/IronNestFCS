@@ -48,34 +48,33 @@ public class FcsWindow
             return;
         }
 
-        GUI.Label(new Rect(x, y, w, h), "Left Task:");
+        GUI.Label(new Rect(x, y, w, h), "Left Gun:");
         y += h + gap;
         if (fcs.LeftTask != null) {
-            GUI.Label(new Rect(x, y, w, h), $"  Progress: {fcs.LeftTask.progress}");
-            y += h + gap;
-            GUI.Label(new Rect(x, y, w, h), $"  Bullet Type: {fcs.LeftTask.bulletType}");
+            GUI.Label(new Rect(x, y, w, h), $"  T{fcs.LeftTask.targetId} {fcs.LeftTask.bulletType} {fcs.LeftTask.progress}");
             y += h + gap;
             GUI.Label(new Rect(x, y, w, h), $"  Target: {fcs.LeftTask.angel:F1}°, {fcs.LeftTask.distance:F2}km");
             y += h + gap;
         }
         else {
-            GUI.Label(new Rect(x, y, w, h), "  No Task");
+            GUI.Label(new Rect(x, y, w, h), "  Idle");
             y += h + gap;
         }
-        GUI.Label(new Rect(x, y, w, h), "Right Task:");
+        GUI.Label(new Rect(x, y, w, h), "Right Gun:");
         y += h + gap;
         if (fcs.RightTask != null) {
-            GUI.Label(new Rect(x, y, w, h), $"  Progress: {fcs.RightTask.progress}");
-            y += h + gap;
-            GUI.Label(new Rect(x, y, w, h), $"  Bullet Type: {fcs.RightTask.bulletType}");
+            GUI.Label(new Rect(x, y, w, h), $"  T{fcs.RightTask.targetId} {fcs.RightTask.bulletType} {fcs.RightTask.progress}");
             y += h + gap;
             GUI.Label(new Rect(x, y, w, h), $"  Target: {fcs.RightTask.angel:F1}°, {fcs.RightTask.distance:F2}km");
             y += h + gap;
         }
         else {
-            GUI.Label(new Rect(x, y, w, h), "  No Task");
+            GUI.Label(new Rect(x, y, w, h), "  Idle");
             y += h + gap;
         }
-        
+
+        GUI.Label(new Rect(x, y, w, h), $"Queued: {fcs.PendingCount}");
+        y += h + gap;
+
     }
 }

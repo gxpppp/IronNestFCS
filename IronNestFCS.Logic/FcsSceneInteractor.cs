@@ -8,50 +8,94 @@ namespace IronNestFCS.Logic;
 
 public class FcsSceneInteractor {
     private FSC fcs;
-    
+
     private List<GameObject> destroyOnShutdown = new();
     private readonly ClickRaycaster clicks = new();
 
-    public BulletType leftBulletType = BulletType.HE;
-    public BulletType rightBulletType = BulletType.HE;
-    
-    private List<GameObject> leftBulletTypeBtns = new();
-    private List<GameObject> rightBulletTypeBtns = new();
+    // 当前选中的弹种（两管炮共享，由调度器决定任务派到哪管炮）。
+    public BulletType selectedBulletType = BulletType.HE;
 
-    private GameObject leftTaskButton;
-    private GameObject rightTaskButton;
-    
+    private List<GameObject> bulletTypeBtns = new();
+
+    // 每个地图目标对应一个按钮：targetId -> 按钮。点击=用当前弹种为该目标入队一个任务。
+    private readonly Dictionary<int, GameObject> targetButtons = new();
+    // 该目标当前有没有未完成任务在跑（避免重复入队）。
+    private readonly HashSet<int> activeTargets = new();
+
+    public bool AutoFire = false;
+
     public FcsSceneInteractor(FSC fcs) {
         this.fcs = fcs;
     }
-    
+
     public void Initialize() {
-        InitializeBulletTypeButtons(leftBulletTypeBtns, -18.4181f);
-        InitializeBulletTypeButtons(rightBulletTypeBtns, -18.6381f);
-        InitializeArtilleryTaskButtons();
+        InitializeBulletTypeButtons();
+        InitializeTargetButtons();
     }
 
-    private void InitializeBulletTypeButtons(List<GameObject> buttonsList, float z) {
+    private void InitializeBulletTypeButtons() {
+        const float z = -18.4181f;
         float x = 0.3488f;
         foreach (BulletType type in Enum.GetValues(typeof(BulletType))) {
+            BulletType captured = type;
             // 先声明再赋值：lambda 要捕获 button，不能在其声明表达式内部引用它。
             GameObject button = null;
             button = AddButton(() => {
-                if (buttonsList == leftBulletTypeBtns) {
-                    leftBulletType = type;
-                }
-                else {
-                    rightBulletType = type;
-                }
-                
-                foreach (var btn in buttonsList) {
+                selectedBulletType = captured;
+                foreach (var btn in bulletTypeBtns) {
                     SetColor(btn, btn == button ? Color.green : Color.white);
                 }
             }, type == BulletType.HE ? Color.green : Color.white);
             button.transform.position = new Vector3(x, -0.6916f, z);
             button.transform.localScale = Vector3.one * 0.02f;
-            buttonsList.Add(button);
+            bulletTypeBtns.Add(button);
             var text = AddText(type.ToString(), 14f);
+            text.transform.SetParent(button.transform, false);
+            text.transform.localPosition = new Vector3(-1.9f, 0, -10.6f);
+            text.transform.localScale = Vector3.one * 1.0f;
+            x -= 0.05f;
+        }
+
+        GameObject autoFireButton = null;
+        autoFireButton = AddButton(() => {
+            AutoFire = !AutoFire;
+            SetColor(autoFireButton, AutoFire ? Color.red : Color.white);
+        }, AutoFire ? Color.red : Color.white);
+        autoFireButton.transform.position = new Vector3(x, -0.6916f, z);
+        autoFireButton.transform.localScale = Vector3.one * 0.02f;
+        var autoFiretext = AddText("Auto Fire", 14f);
+        autoFiretext.transform.SetParent(autoFireButton.transform, false);
+        autoFiretext.transform.localPosition = new Vector3(-1.9f, 0, -10.6f);
+        autoFiretext.transform.localScale = Vector3.one * 1.0f;
+    }
+
+    /// <summary>
+    /// 4 个目标按钮（对应地图上 1~4 号炮兵标记）。点击即用当前选中弹种为该目标入队一个任务，
+    /// 调度器自动派给空闲炮管。用 activeTargets 防止同一目标重复入队。
+    /// </summary>
+    private void InitializeTargetButtons() {
+        const float z = -18.6381f;
+        float x = 0.3488f;
+        for (int i = 1; i <= 4; i++) {
+            int targetId = i;
+            GameObject button = AddButton(() => {
+                if (activeTargets.Contains(targetId)) {
+                    return; // 该目标已有任务在跑，忽略重复点击
+                }
+                var task = fcs.MapTable.GetMarkTarget(targetId);
+                if (task == null) {
+                    return; // 地图上没有这个编号的目标
+                }
+                task.targetId = targetId;
+                task.bulletType = selectedBulletType;
+                activeTargets.Add(targetId);
+                SetColor(targetButtons[targetId], Color.gray);
+                fcs.EnqueueTask(task);
+            }, Color.red);
+            button.transform.position = new Vector3(x, -0.6916f, z);
+            button.transform.localScale = Vector3.one * 0.02f;
+            targetButtons[targetId] = button;
+            var text = AddText("T" + targetId, 14f);
             text.transform.SetParent(button.transform, false);
             text.transform.localPosition = new Vector3(-1.9f, 0, -10.6f);
             text.transform.localScale = Vector3.one * 1.0f;
@@ -59,53 +103,12 @@ public class FcsSceneInteractor {
         }
     }
 
-    public void TaskFinished(LeftRight leftRight) {
-        var button = leftRight == LeftRight.Left ? leftTaskButton : rightTaskButton;
-        SetColor(button, Color.red);
-    }
-
-    private void InitializeArtilleryTaskButtons() {
-        leftTaskButton = AddButton(() => {
-            if (fcs.LeftTask != null && fcs.LeftTask.progress != Progress.Finished) {
-                return;
-            }
-            var task = fcs.MapTable.GetMarkTarget(1);
-            task.bulletType = leftBulletType;
-            task.progress = Progress.Pending;
-            fcs.LeftTask = task;
-            SetColor(leftTaskButton, Color.gray);
-            fcs.RunTask(LeftRight.Left);
-        }, Color.red);
-        leftTaskButton.transform.position = new Vector3(
-            0.3488f - Enum.GetValues(typeof(BulletType)).Length * 0.05f, 
-            -0.6916f, 
-            -18.4181f
-        );
-        leftTaskButton.transform.localScale = Vector3.one * 0.02f;
-        var leftText = AddText("Add Task", 14f);
-        leftText.transform.SetParent(leftTaskButton.transform, false);
-        leftText.transform.localPosition = new Vector3(-1.9f, 0, -10.6f);
-        
-        rightTaskButton = AddButton(() => {
-            if (fcs.RightTask != null && fcs.RightTask.progress != Progress.Finished) {
-                return;
-            }
-            var task = fcs.MapTable.GetMarkTarget(2);
-            task.bulletType = rightBulletType;
-            task.progress = Progress.Pending;
-            fcs.RightTask = task;
-            SetColor(rightTaskButton, Color.gray);
-            fcs.RunTask(LeftRight.Right);
-        }, Color.red);
-        rightTaskButton.transform.position = new Vector3(
-            0.3488f - Enum.GetValues(typeof(BulletType)).Length * 0.05f, 
-            -0.6916f, 
-            -18.6381f
-        );
-        rightTaskButton.transform.localScale = Vector3.one * 0.02f;
-        var rightText = AddText("Add Task", 14f);
-        rightText.transform.SetParent(rightTaskButton.transform, false);
-        rightText.transform.localPosition = new Vector3(-1.9f, 0, -10.6f);
+    /// <summary>任务完成回调：把对应目标按钮变红，并解除 active 标记以便再次下达。</summary>
+    public void TaskFinished(ArtilleryTask task) {
+        activeTargets.Remove(task.targetId);
+        if (targetButtons.TryGetValue(task.targetId, out var button)) {
+            SetColor(button, Color.red);
+        }
     }
     
     public void Update() {

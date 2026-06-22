@@ -6,15 +6,16 @@ public enum Progress {
     SelectingBullet,
     LoadingBullet,
     LoadingPowder,
-    WaitLoadingFinished,
+    WaitLoading,
     Aiming,
     WaitingForFire,
-    WaitingForBackToIdle,
+    BackToIdle,
     Finished,
     Failed,
 }
 
 public class ArtilleryTask {
+    public int targetId;
     public float angel;
     public float distance;
     public BulletType bulletType;
