@@ -1,38 +1,41 @@
 using Il2Cpp;
 using Il2CppInterop.Runtime.InteropTypes.Arrays;
 using MelonLoader;
+using MelonLoader.Utils;
 using UnityEngine;
 using Object = UnityEngine.Object;
 
-[assembly: MelonInfo(typeof(IronNestFCS.CustomRecorder.CustomRecorderMod), "IronNestFCS.CustomRecorder", "0.1.0", "svr2kos2")]
+[assembly: MelonInfo(typeof(IronNestFCS.CustomRecorder.CustomRecorderMod), "IronNestFCS.CustomRecorder", "0.2.0", "svr2kos2")]
 [assembly: MelonGame("Iron Nest", "Iron Nest: Heavy Turret Simulator")]
 
 namespace IronNestFCS.CustomRecorder;
 
 /// <summary>
-/// 独立的 MelonMod：克隆场景里的 RecordDisk，并用 StreamingAssets 下的自定义素材
-/// 替换其音轨（a.wav）和唱片贴图（diskTexture.png）。
+/// 独立的 MelonMod：扫描 UserData/CustomRecords 下所有“带内嵌封面”的音频文件
+/// （.mp3 / .wav / .flac），为每个文件克隆一张场景里的 RecordDisk，
+/// 用该文件的封面合成唱片贴图、用其解码后的 PCM 作为音轨。
 ///
-/// 这部分原本内嵌在 IronNestFCS.Logic 的 FcsModule 里，但它与火控逻辑无关、
-/// 是一次性的场景装饰，故拆成单独的 mod，放进 Mods/ 由 MelonLoader 自动加载。
+/// 用户只需把音频文件丢进 CustomRecords 即可，无需再手工准备 a.wav / diskTexture.png，
+/// 也不再从 StreamingAssets 读取素材。
+///
+/// 解码与标签读取走纯托管库（NAudio / NAudio.Flac / TagLib#），不受本作 IL2CPP 裁剪影响；
+/// 只有“把结果塞回 Unity”这一步受 IL2CPP 约束，沿用已验证可用的 API（见各处注释）。
 /// 进场景后轮询 RecordDisk，出现时执行一次。
 /// </summary>
 public class CustomRecorderMod : MelonMod
 {
-    private GameObject? diskClone;
+    private readonly List<GameObject> diskClones = new();
+    // 每张克隆盘各自持有的流式音轨状态：PCMReaderCallback 按需供数，必须保活托管侧
+    // 样本缓冲与读游标，否则被 GC 回收后回调里访问就是野指针。模块存活期间一直持有。
+    private readonly List<TrackPlayback> playbacks = new();
     private bool done;
-
-    // 流式 AudioClip 用 PCMReaderCallback 按需供数：必须保活托管侧的样本缓冲和读游标，
-    // 否则被 GC 回收后回调里访问就是野指针。模块存活期间一直持有。
-    private float[]? _trackSamples;
-    private int _trackReadPos;
 
     public override void OnUpdate()
     {
         if (done)
             return;
 
-        // 原先由 FCS 绑定成功后触发；这里独立运行，轮询 RecordDisk 出现即执行一次。
+        // 轮询 RecordDisk 出现即执行一次。
         var src = GameObject.Find("RecordDisk");
         if (src == null)
             return;
@@ -40,248 +43,224 @@ public class CustomRecorderMod : MelonMod
         done = true;
         try
         {
-            CreateCustomRecorder(src);
+            CreateCustomRecorders(src);
         }
         catch (Exception ex)
         {
-            MelonLogger.Error($"[CustomRecorder] Failed to create custom disk: {ex}");
+            MelonLogger.Error($"[CustomRecorder] Failed to create custom disks: {ex}");
         }
     }
 
     public override void OnDeinitializeMelon()
     {
-        if (diskClone != null)
+        foreach (var clone in diskClones)
         {
-            Object.Destroy(diskClone);
-            diskClone = null;
+            if (clone != null)
+                Object.Destroy(clone);
         }
+        diskClones.Clear();
+        playbacks.Clear();
     }
 
-    private void CreateCustomRecorder(GameObject src)
+    /// <summary>
+    /// 列出 CustomRecords 里所有受支持且带封面的文件，逐个克隆 RecordDisk 并装配。
+    /// 多张盘沿原盘朝同一方向依次排开，避免叠在一起。
+    /// </summary>
+    private void CreateCustomRecorders(GameObject src)
     {
-        var disk = Object.Instantiate(src);
-        diskClone = disk;
-        disk.transform.position = src.transform.position - Vector3.fwd * 0.5f;
-        disk.transform.rotation = src.transform.rotation;
-        var recordItem = disk.GetComponent<RecordItem>();
-        // 从 StreamingAssets/a.wav 加载音频并替换 tracks。
-        // 不用 UnityWebRequestMultimedia：本作 IL2CPP 把 DownloadHandlerAudioClip 的 ctor 裁掉了
-        //（游戏本体没用到），运行时 MissingMethodException。
-        // 也不能用 AudioClip.SetData：它最终走 Il2CppSystem.ReadOnlySpan.GetPinnableReference()，
-        // 这个 interop 包装方法同样被裁掉了。
-        // 改用带 PCMReaderCallback 的 AudioClip.Create 重载——它是纯 il2cpp_runtime_invoke，无 Span 依赖。
-        // Unity 播放时回调拉取 PCM，我们从托管缓冲里按游标喂数据。
-        LoadCustomTrack(recordItem);
-
-        var renderer = recordItem.transform.FindChild("Record Disk Blend")
-            .GetComponent<MeshRenderer>();
-        // 先把当前贴图导出到 out.png（用于确认抓到的是哪张图），再用 diskTexture.png 替换。
-        ExportTexture(renderer, "out.png");
-        ReplaceTexture(renderer, "diskTexture.png");
-    }
-
-    /// <summary>
-    /// 把 <paramref name="renderer"/> 当前主贴图导出成 StreamingAssets/<paramref name="fileName"/>。
-    /// 游戏贴图通常 isReadable=false（仅在 GPU），不能直接 EncodeToPNG；
-    /// 故先 Blit 到临时 RenderTexture，再 ReadPixels 拷回一张可读 Texture2D 后编码。
-    /// </summary>
-    private static void ExportTexture(MeshRenderer renderer, string fileName) {
-        var tex = renderer.material.mainTexture;
-        if (tex == null) {
-            MelonLogger.Error("[CustomRecorder] Failed to export：material.mainTexture is empty.");
+        var dir = System.IO.Path.Combine(MelonEnvironment.UserDataDirectory, "CustomRecords");
+        if (!System.IO.Directory.Exists(dir))
+        {
+            System.IO.Directory.CreateDirectory(dir);
+            MelonLogger.Msg($"[CustomRecorder] Created empty folder, drop audio files here: {dir}");
             return;
         }
 
-        int w = tex.width, h = tex.height;
-        // depthBuffer=0：只要颜色，不需要深度。临时 RT 用完必须 ReleaseTemporary，否则泄漏显存。
-        var rt = RenderTexture.GetTemporary(w, h, 0);
-        var prevActive = RenderTexture.active;
-        try {
-            Graphics.Blit(tex, rt);
-            RenderTexture.active = rt; // ReadPixels 读的是当前 active RT。
-
-            // RGBA32 + 不带 mipmap，正好对应 PNG。
-            var readable = new Texture2D(w, h, TextureFormat.RGBA32, false);
-            readable.ReadPixels(new Rect(0, 0, w, h), 0, 0);
-            readable.Apply();
-
-            var png = ImageConversion.EncodeToPNG(readable);
-            Object.Destroy(readable); // 临时可读纹理用完即弃。
-
-            var path = System.IO.Path.Combine(Application.streamingAssetsPath, fileName);
-            // Il2CppStructArray<byte> 不能直接喂 File.WriteAllBytes，先拷成托管 byte[]。
-            var managed = new byte[png.Length];
-            for (int i = 0; i < png.Length; i++) managed[i] = png[i];
-            System.IO.File.WriteAllBytes(path, managed);
-            MelonLogger.Msg($"[CustomRecorder] Texture exported {w}x{h} → {path}");
+        // 枚举受支持扩展名的文件，按文件名排序得到稳定顺序。
+        var files = new List<string>();
+        foreach (var f in System.IO.Directory.GetFiles(dir))
+        {
+            if (AudioImport.IsSupported(f))
+                files.Add(f);
         }
-        catch (Exception ex) {
-            MelonLogger.Error($"[CustomRecorder] Failed to export texture: {ex}");
-        }
-        finally {
-            RenderTexture.active = prevActive;
-            RenderTexture.ReleaseTemporary(rt);
-        }
-    }
+        files.Sort(StringComparer.OrdinalIgnoreCase);
 
-    /// <summary>
-    /// 读取 StreamingAssets/<paramref name="fileName"/>（PNG/JPG），替换 <paramref name="renderer"/> 的主贴图。
-    /// LoadImage 会按文件实际尺寸自动 Reinitialize，故初始尺寸随意。
-    /// </summary>
-    private static void ReplaceTexture(MeshRenderer renderer, string fileName) {
-        var path = System.IO.Path.Combine(Application.streamingAssetsPath, fileName);
-        if (!System.IO.File.Exists(path)) {
-            MelonLogger.Error($"[CustomRecorder] Can't find texture: {path}");
+        if (files.Count == 0)
+        {
+            MelonLogger.Msg($"[CustomRecorder] No supported audio (.mp3/.wav/.flac) in {dir}");
             return;
         }
 
-        try {
-            var bytes = System.IO.File.ReadAllBytes(path);
-            var tex = new Texture2D(2, 2, TextureFormat.RGBA32, false);
-            // LoadImage(Il2CppStructArray<byte>, markNonReadable)：传 false 保留可读，便于以后再导出。
-            if (!ImageConversion.LoadImage(tex, new Il2CppStructArray<byte>(bytes), false)) {
-                MelonLogger.Error($"[CustomRecorder] LoadImage failed, can't decode image: {path}");
-                Object.Destroy(tex);
-                return;
+        int placed = 0;
+        foreach (var file in files)
+        {
+            try
+            {
+                // 只处理带封面的文件——这是本 mod 的约定。无封面者跳过并提示。
+                var cover = TagReader.ReadCover(file);
+                if (cover == null)
+                {
+                    MelonLogger.Warning($"[CustomRecorder] Skip (no embedded cover): {System.IO.Path.GetFileName(file)}");
+                    continue;
+                }
+
+                if (CreateOneDisk(src, file, cover, placed))
+                    placed++;
             }
-            // 用实例 material（非 sharedMaterial）替换，避免改到其他共享此材质的物体。
-            renderer.material.mainTexture = tex;
-            MelonLogger.Msg($"[CustomRecorder] Texture swapped {tex.width}x{tex.height} ← {path}");
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"[CustomRecorder] Failed on {System.IO.Path.GetFileName(file)}: {ex}");
+            }
         }
-        catch (Exception ex) {
-            MelonLogger.Error($"[CustomRecorder] Failed to swap texture: {ex}");
-        }
+
+        MelonLogger.Msg($"[CustomRecorder] Done: {placed} disk(s) created from {files.Count} file(s).");
     }
 
     /// <summary>
-    /// 读取 StreamingAssets/a.wav，构造流式 AudioClip 并替换 <paramref name="recordItem"/> 的 tracks 数组。
-    /// 仅支持未压缩 WAV：16-bit PCM 或 32-bit IEEE float。文件不大，同步读取即可（仅首帧一次）。
+    /// 为单个音频文件克隆一张盘，装配合成封面贴图与流式音轨。
+    /// <paramref name="index"/> 用于沿原盘前方依次错开摆放。
     /// </summary>
-    private void LoadCustomTrack(RecordItem recordItem) {
-        // StreamingAssets 打包后是只读真实文件，直接拼路径读字节。
-        var path = System.IO.Path.Combine(Application.streamingAssetsPath, "a.wav");
-        if (!System.IO.File.Exists(path)) {
-            MelonLogger.Error($"[CustomRecorder] Can't find audio: {path}");
-            return;
-        }
-
+    private bool CreateOneDisk(GameObject src, string file, byte[] cover, int index)
+    {
+        // 先解码音频，失败就别建盘了。
+        float[] samples;
         int channels, sampleRate;
-        try {
-            var bytes = System.IO.File.ReadAllBytes(path);
-            _trackSamples = DecodeWav(bytes, out channels, out sampleRate);
+        try
+        {
+            samples = AudioImport.Decode(file, out channels, out sampleRate);
         }
-        catch (Exception ex) {
-            MelonLogger.Error($"[CustomRecorder] Decode a.wav failed: {ex}");
-            return;
+        catch (Exception ex)
+        {
+            MelonLogger.Error($"[CustomRecorder] Decode failed for {System.IO.Path.GetFileName(file)}: {ex}");
+            return false;
+        }
+        if (samples.Length == 0 || channels <= 0 || sampleRate <= 0)
+        {
+            MelonLogger.Warning($"[CustomRecorder] Empty/invalid audio: {System.IO.Path.GetFileName(file)}");
+            return false;
         }
 
-        _trackReadPos = 0;
-        int lengthSamples = _trackSamples.Length / channels; // 每声道采样数
+        // 合成封面贴图。
+        var tex = CoverImage.Build(cover);
+        if (tex == null)
+        {
+            MelonLogger.Warning($"[CustomRecorder] Cover decode failed: {System.IO.Path.GetFileName(file)}");
+            return false;
+        }
 
-        // stream=true：Unity 不一次性缓冲，而是反复调回调取数据，适合循环播放。
-        // 回调里禁止访问 IL2CPP 复杂对象，只读写传入的 float 数组即可，最安全。
-        // PCMReaderCallback/PCMSetPositionCallback 有从托管 System.Action 的隐式转换（DelegateSupport 包装）。
-        AudioClip.PCMReaderCallback reader = (System.Action<Il2CppStructArray<float>>)PcmRead;
-        AudioClip.PCMSetPositionCallback setPos = (System.Action<int>)PcmSetPosition;
-        var clip = AudioClip.Create("a", lengthSamples, channels, sampleRate, true, reader, setPos);
+        // 克隆盘并沿原盘 -forward 方向按 index 依次错开 0.5 单位。
+        var disk = Object.Instantiate(src);
+        diskClones.Add(disk);
+        var pos = src.transform.position - Vector3.fwd * (0.2f * (index + 1));
+        disk.transform.position = pos;
+        disk.transform.rotation = src.transform.rotation;
+
+        var recordItem = disk.GetComponent<RecordItem>();
+
+        // 装配流式音轨。
+        var playback = new TrackPlayback(samples, channels);
+        playbacks.Add(playback);
+        AssignTrack(recordItem, playback, sampleRate);
+
+        // 替换唱片贴图。
+        var renderer = recordItem.transform.FindChild("Record Disk Blend").GetComponent<MeshRenderer>();
+        renderer.material.mainTexture = tex;
+
+        // 尽力设置显示名（字段在不同版本可能不同，存在才设）。
+        TrySetDisplayName(recordItem, TagReader.ReadTitle(file));
+
+        MelonLogger.Msg($"[CustomRecorder] + {System.IO.Path.GetFileName(file)}  " +
+                        $"({(float)(samples.Length / channels) / sampleRate:F1}s, {channels}ch@{sampleRate}Hz)");
+        return true;
+    }
+
+    /// <summary>
+    /// 用带 PCMReaderCallback 的 AudioClip.Create 构造流式音轨并写入 RecordItem.tracks。
+    /// 不用 DownloadHandlerAudioClip / AudioClip.SetData：本作 IL2CPP 把它们的 ctor / Span
+    /// 依赖裁掉了，运行时会 MissingMethodException。PCMReaderCallback 重载是纯
+    /// il2cpp_runtime_invoke，无 Span 依赖，Unity 播放时回调拉取 PCM。
+    /// </summary>
+    private static void AssignTrack(RecordItem recordItem, TrackPlayback playback, int sampleRate)
+    {
+        int lengthSamples = playback.LengthPerChannel; // 每声道采样数
+
+        // stream=true：Unity 不一次性缓冲，反复回调取数据，适合循环。
+        // 回调里禁止访问 IL2CPP 复杂对象，只读写传入的 float 数组，最安全。
+        AudioClip.PCMReaderCallback reader = (System.Action<Il2CppStructArray<float>>)playback.PcmRead;
+        AudioClip.PCMSetPositionCallback setPos = (System.Action<int>)playback.PcmSetPosition;
+        var clip = AudioClip.Create("CustomRecord", lengthSamples, playback.Channels, sampleRate, true, reader, setPos);
 
         recordItem.tracks = new Il2CppReferenceArray<AudioClip>(new[] { clip });
         recordItem.loop = true;
-        MelonLogger.Msg($"[CustomRecorder] RecordItem.tracks swapped，{(float)lengthSamples / sampleRate:F1}s");
     }
 
     /// <summary>
-    /// PCMReaderCallback：Unity 每次要播一段时调用，把接下来的样本写满 <paramref name="data"/>。
-    /// 缓冲读完即环回（配合 RecordItem.loop / AudioSource 循环）。游标自增，不依赖 SetPosition。
+    /// 反射设置常见的显示名字段（displayName / nameText 等）。字段缺失或类型不符就静默跳过——
+    /// 这只是锦上添花，失败不影响音轨与贴图。
     /// </summary>
-    private void PcmRead(Il2CppStructArray<float> data) {
-        var src = _trackSamples;
-        if (src == null || src.Length == 0) {
+    private static void TrySetDisplayName(RecordItem recordItem, string title)
+    {
+        try
+        {
+            var prop = recordItem.GetType().GetProperty("displayName");
+            if (prop != null && prop.PropertyType == typeof(string) && prop.CanWrite)
+                prop.SetValue(recordItem, title);
+        }
+        catch
+        {
+            // 显示名是可选项，忽略任何失败。
+        }
+    }
+}
+
+/// <summary>
+/// 单张盘的流式播放状态：持有交错 float 样本与读游标，提供 PCM 回调。
+/// 每张盘一个实例，互不干扰。被 CustomRecorderMod 长期持有以防 GC。
+/// </summary>
+internal sealed class TrackPlayback
+{
+    private readonly float[] _samples; // 交错样本，范围 [-1,1]
+    private int _readPos;
+
+    internal int Channels { get; }
+    internal int LengthPerChannel => _samples.Length / Channels;
+
+    internal TrackPlayback(float[] samples, int channels)
+    {
+        _samples = samples;
+        Channels = channels;
+    }
+
+    /// <summary>
+    /// PCMReaderCallback：Unity 每次要播一段时调用，把接下来的样本写满 data。
+    /// 缓冲读完即环回（配合 RecordItem.loop / AudioSource 循环）。游标自增。
+    /// </summary>
+    internal void PcmRead(Il2CppStructArray<float> data)
+    {
+        var src = _samples;
+        if (src.Length == 0)
+        {
             for (int i = 0; i < data.Length; i++) data[i] = 0f;
             return;
         }
-        for (int i = 0; i < data.Length; i++) {
-            data[i] = src[_trackReadPos];
-            if (++_trackReadPos >= src.Length) _trackReadPos = 0;
+        for (int i = 0; i < data.Length; i++)
+        {
+            data[i] = src[_readPos];
+            if (++_readPos >= src.Length) _readPos = 0;
         }
     }
 
     /// <summary>
-    /// PCMSetPositionCallback：Unity seek 或循环回到起点时调用，参数是“每声道”采样位置。
-    /// 换算成交错缓冲里的绝对索引。channels 信息已隐含在缓冲布局里，用总长比例还原即可。
+    /// PCMSetPositionCallback：Unity seek 或循环回起点时调用，参数是“每声道”采样位置。
+    /// 换算成交错缓冲的绝对索引。循环回零时 position 多为 0。
     /// </summary>
-    private void PcmSetPosition(int positionSamples) {
-        var src = _trackSamples;
-        if (src == null || src.Length == 0) { _trackReadPos = 0; return; }
-        // positionSamples 是每声道的；这里直接按比例不安全，但我们只在循环回零时被调，position=0 居多。
-        // 为稳妥起见对非零值也做钳制：交错索引 = position * channels，但 channels 未在此持有，
-        // 故用最简单可靠的处理——回零。绝大多数循环场景 Unity 传 0。
-        _trackReadPos = positionSamples <= 0 ? 0 : Math.Min(_trackReadPos, src.Length - 1);
-    }
-
-    /// <summary>
-    /// 把未压缩 WAV 字节解析成交错 float 样本数组。支持 16-bit PCM(format=1) 和 32-bit float(format=3)。
-    /// 逐块扫描 RIFF chunk，跳过 fmt/data 之外的块（如 LIST/fact），兼容带额外块的文件。
-    /// </summary>
-    private static float[] DecodeWav(byte[] bytes, out int channels, out int sampleRate) {
-        // RIFF 头：'RIFF' <size:4> 'WAVE'，之后是若干 chunk：<id:4> <size:4> <data:size>。
-        if (bytes.Length < 12 ||
-            bytes[0] != 'R' || bytes[1] != 'I' || bytes[2] != 'F' || bytes[3] != 'F' ||
-            bytes[8] != 'W' || bytes[9] != 'A' || bytes[10] != 'V' || bytes[11] != 'E') {
-            throw new FormatException("Not a legit RIFF/WAVE file.");
-        }
-
-        int format = 0, bitsPerSample = 0;
-        channels = 0;
-        sampleRate = 0;
-        int dataOffset = -1, dataLength = 0;
-
-        int pos = 12;
-        while (pos + 8 <= bytes.Length) {
-            string id = System.Text.Encoding.ASCII.GetString(bytes, pos, 4);
-            int size = BitConverter.ToInt32(bytes, pos + 4);
-            int body = pos + 8;
-            if (id == "fmt ") {
-                format = BitConverter.ToUInt16(bytes, body);
-                channels = BitConverter.ToUInt16(bytes, body + 2);
-                sampleRate = BitConverter.ToInt32(bytes, body + 4);
-                bitsPerSample = BitConverter.ToUInt16(bytes, body + 14);
-            }
-            else if (id == "data") {
-                dataOffset = body;
-                dataLength = size;
-            }
-            // chunk 按偶数字节对齐：奇数 size 后有 1 字节 padding。
-            pos = body + size + (size & 1);
-        }
-
-        if (dataOffset < 0) throw new FormatException("Miss data block");
-        if (channels <= 0) throw new FormatException("Miss fmt block or wrong channels");
-        if (format != 1 && format != 3) throw new FormatException($"Unsupported WAV format {format}（PCM=1 / float=3 only）");
-        if (format == 1 && bitsPerSample != 16) throw new FormatException($"PCM only support 16-bit，but got {bitsPerSample}-bit");
-        if (format == 3 && bitsPerSample != 32) throw new FormatException($"float only support 32-bit，but got {bitsPerSample}-bit");
-
-        // data 长度可能超过文件实际剩余（少见但要防越界）。
-        if (dataOffset + dataLength > bytes.Length) dataLength = bytes.Length - dataOffset;
-
-        int bytesPerSample = bitsPerSample / 8;
-        int totalSamples = dataLength / bytesPerSample; // 含所有声道，即交错后的总采样点数
-        var samples = new float[totalSamples];
-
-        if (format == 1) {
-            // 16-bit PCM：小端 short，归一化到 [-1,1]。
-            for (int i = 0; i < totalSamples; i++) {
-                short s = BitConverter.ToInt16(bytes, dataOffset + i * 2);
-                samples[i] = s / 32768f;
-            }
-        }
-        else {
-            // 32-bit IEEE float：已是 [-1,1]，直接拷。
-            for (int i = 0; i < totalSamples; i++) {
-                samples[i] = BitConverter.ToSingle(bytes, dataOffset + i * 4);
-            }
-        }
-
-        return samples;
+    internal void PcmSetPosition(int positionSamples)
+    {
+        var src = _samples;
+        if (src.Length == 0) { _readPos = 0; return; }
+        if (positionSamples <= 0) { _readPos = 0; return; }
+        // 每声道位置 → 交错绝对索引，并钳制到缓冲范围内。
+        long abs = (long)positionSamples * Channels;
+        _readPos = (int)Math.Min(abs, src.Length - 1);
     }
 }
