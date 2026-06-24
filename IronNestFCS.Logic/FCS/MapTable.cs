@@ -40,7 +40,8 @@ public class MapTable {
         if (angle < 0) angle += 360;
         var task = new ArtilleryTask {
             angel = angle,
-            distance = dist
+            distance = dist,
+            position = artilleries[index].localPosition * 3.8164f + new Vector3(10.016f, 5.235f, 0f)
         };
         return task;
     }

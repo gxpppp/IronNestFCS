@@ -75,6 +75,23 @@ public class FcsWindow
 
         GUI.Label(new Rect(x, y, w, h), $"Queued: {fcs.PendingCount}");
         y += h + gap;
+        foreach (var item in fcs.QueueCan)
+        {
+            GUI.Label(new Rect(x, y, w, h), $"  target{item.targetId} { ConvertPosition(item.position)} {item.angel,5:F1}°/{item.distance,5:F2}km {item.bulletType.ToString()} ");
+            y += h + gap;
+        }
 
+    }
+
+    /// <summary> 计算坐标点所对应的区域字符串 </summary>
+    public static string ConvertPosition(Vector3 position)
+    {
+        int leterIndex = (int)position.x;
+        string zoneCol = leterIndex >= 0 && leterIndex < 26 ? ((char)('A' + leterIndex)).ToString() : "#";
+        int zoneRow = (int)position.y + 1;
+        int subCol = (int)(position.x * 10) % 10;  // B: 第一位小数
+        int subRow = (int)(position.y * 10) % 10;  // B: 第一位小数
+
+        return $"{zoneCol}{zoneRow}  {subCol}:{subRow}";
     }
 }

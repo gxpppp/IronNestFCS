@@ -48,6 +48,7 @@ public class FSC
 
     /// <summary>等待派发的任务数（已入队但还没分到炮管）。供 UI 显示。</summary>
     public int PendingCount => _taskQueue.Count;
+    public Queue<ArtilleryTask> QueueCan => new Queue<ArtilleryTask>(_taskQueue);
 
     /// <summary>
     /// 控制台互斥锁：保护弹道计算器、确认开关台、采购台这三组全局唯一的"短操作"硬件。
