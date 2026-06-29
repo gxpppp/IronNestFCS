@@ -1,3 +1,4 @@
+using Il2Cpp;
 using IronNestFCS.Abstractions;
 using IronNestFCS.Logic.FCS;
 using UnityEngine.InputSystem;
@@ -15,6 +16,9 @@ public class FcsModule : IFcsModule
     private FcsWindow? window;
     private TacticalRadar? radar;
 
+    private bool autoSweep;
+    private readonly HashSet<EntityLocation> swept = new(new EntityLocationComparer());
+
     public bool Initialize()
     {
         window = new FcsWindow(fcs);
@@ -28,13 +32,26 @@ public class FcsModule : IFcsModule
         fcs.Update();
         radar?.Update();
 
+        if (autoSweep && radar != null && fcs.IsBound)
+        {
+            var alive = radar.AliveUnits;
+            foreach (var unit in alive)
+            {
+                if (unit.Location != null && swept.Add(unit.Location))
+                {
+                    fcs.FireAtWorldPos(swept.Count, unit.WorldPos);
+                }
+            }
+        }
+
         var kb = Keyboard.current;
         if (kb == null || !fcs.IsBound)
             return;
 
         if (kb.numpad0Key.wasPressedThisFrame)
         {
-            SweepAllHostiles();
+            autoSweep = !autoSweep;
+            if (autoSweep) SweepAllHostiles();
             return;
         }
         if (kb.numpad1Key.wasPressedThisFrame) fcs.FireTarget(1);
@@ -49,9 +66,29 @@ public class FcsModule : IFcsModule
         if (alive == null || alive.Count == 0) return;
         for (int i = 0; i < alive.Count; i++)
         {
+            if (alive[i].Location != null)
+                swept.Add(alive[i].Location);
             fcs.FireAtWorldPos(i + 1, alive[i].WorldPos);
         }
+}
+
+/// <summary>
+/// IL2CPP 对象的引用相等比较器，确保同一个 EntityLocation 不重复入队。
+/// </summary>
+internal sealed class EntityLocationComparer : IEqualityComparer<EntityLocation>
+{
+    public bool Equals(EntityLocation? x, EntityLocation? y)
+    {
+        if (ReferenceEquals(x, y)) return true;
+        if (x is null || y is null) return false;
+        return x.Pointer == y.Pointer;
     }
+
+    public int GetHashCode(EntityLocation obj)
+    {
+        return obj.Pointer.GetHashCode();
+    }
+}
 
     public void OnGui()
     {
