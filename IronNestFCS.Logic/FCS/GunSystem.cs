@@ -187,6 +187,25 @@ public class GunSystem {
         yield return GameStateWatcher.WaitForReloadComplete(gunController);
     }
 
+    /// <summary>直接退弹（不发射，用 ArtilleryReloadController 弹出膛内弹）</summary>
+    public IEnumerator EjectChamberedShell()
+    {
+        var gunSystem = GameObject.Find("Gun System " + _surfix)?.transform;
+        var rc = gunSystem?.GetComponentInChildren<ArtilleryReloadController>();
+        if (rc != null)
+        {
+            rc.EjectChamberedShell();
+            yield return new WaitForSeconds(1f);
+            yield return GameStateWatcher.WaitForReloadComplete(gunController);
+        }
+    }
+
+    /// <summary>直接击发（用 GunController.RequestFire 代替 spinner）</summary>
+    public void RequestFire()
+    {
+        gunController.RequestFire();
+    }
+
     public bool HaveBulletInCylinder(BulletType type) {
         RefreshBullets();
         return bullets.Contains(type.ToString());
@@ -202,6 +221,11 @@ public class GunSystem {
             yield return new WaitForSeconds(0.1f);
         }
         yield return GameStateWatcher.WaitForReloadComplete(gunController, 20f);
+        // 确保后塞锁紧
+        if (!gunController.ExternalReloadLoweringLocked) {
+            gunController.SetExternalReloadLoweringLocked(true);
+            yield return new WaitForSeconds(0.5f);
+        }
     }
 
     public IEnumerator WaitFire() {

@@ -266,24 +266,15 @@ public class FSC
         
         var powderCount = _sceneInteractor.maxCharge ? 6 : BallisticCalculator.MinimumCharge(task.distance);
 
-        // ===== 检查炮管：膛内弹种不对则独立 dump 清膛 =====
+        // ===== 检查炮管：膛内弹种不对则退弹清膛 =====
         string? chambered = gunSys.BulletInChamber();
 
         if (chambered != null && chambered != task.bulletType.ToString())
         {
-            MelonLogger.Msg($"[FCS] {leftRight}: dump {chambered} (need {task.bulletType})");
+            MelonLogger.Msg($"[FCS] {leftRight}: eject {chambered} (need {task.bulletType})");
             task.progress = Progress.DumpingWrongShell;
             MarkProgress(leftRight, Progress.DumpingWrongShell);
-
-            yield return gunSys.LoadPowder(1);
-            task.progress = Progress.WaitLoading;
-            MarkProgress(leftRight, Progress.WaitLoading);
-            while (!gunSys.CanFire()) yield return new WaitForSeconds(1f);
-
-            yield return TriggerConsole.Arm(leftRight);
-            if (_sceneInteractor.AutoFire) TriggerConsole.Fire();
-            yield return gunSys.WaitFire();
-            yield return gunSys.WaitBackToIdle();
+            yield return gunSys.EjectChamberedShell();
         }
 
         // ===== 临界区 1：解算（无论如何都要算仰角）=====
@@ -379,7 +370,7 @@ public class FSC
             yield return TriggerConsole.ReadyToFire();
             yield return TriggerConsole.Arm(leftRight);
             if (_sceneInteractor.AutoFire) {
-                TriggerConsole.Fire();
+                gunSys.RequestFire();
             }
             yield return gunSys.WaitFire();
         }
