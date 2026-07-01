@@ -26,15 +26,15 @@
 
 ## 键盘快捷键
 
-| 按键 | 功能 |
-| --- | --- |
-| `F9` | 热重载火控逻辑（开发用） |
-| `Numpad 0` | 切换持续扫荡模式（开启时面板显示 `[Sweep ON]`，同时强制切为自动标点） |
-| `Numpad 1-4` | 分别击发 T1-T4 目标（等价于点击地图右侧按钮） |
-| `Numpad 5` | 切换自动/手动标点模式（右上角雷达标题显示当前模式） |
-| `Numpad 7` | 强制重置左炮（停协程、放锁、任务放回队首重试） |
-| `Numpad 8` | 强制重置右炮 |
-| `Numpad 9` | 强制重置双炮 |
+| 按键 (Numpad) | 笔记本替代 | 功能 |
+| --- | --- | --- |
+| `F9` | — | 热重载火控逻辑（开发用） |
+| `Numpad 0` | `Ctrl+0` | 切换扫荡（面板 `[Sweep ON]`，强制自动标点） |
+| `Numpad 1-4` | `Ctrl+1-4` | 击发 T1-T4 |
+| `Numpad 5` | `Ctrl+5` | 切换自动/手动标点 |
+| `Numpad 7` | `Ctrl+7` | 重置左炮 |
+| `Numpad 8` | `Ctrl+8` | 重置右炮 |
+| `Numpad 9` | `Ctrl+9` | 重置双炮 |
 
 ## 敌人阵营识别
 
@@ -176,6 +176,16 @@ dotnet build IronNestFCS.sln -c Release
 修改 `IronNestFCS.Logic` 内的代码后，重新构建该项目（dll 会直接输出到游戏的 `UserData/IronNestFCS/`），切回游戏按 **F9** 即可加载新逻辑，无需重启游戏。
 
 > 注意：F9 热重载后需要重新按 Numpad 0 开启扫荡、按 Numpad 5 切换标点模式。
+
+## 常见问题
+
+| 问题 | 原因 | 解决 |
+| --- | --- | --- |
+| 构建报 `MSB3270: MSIL/AMD64 不匹配` | 缺少 x64 配置 | 在 csproj 添加 `<PlatformTarget>x64</PlatformTarget>` |
+| 装药/装弹卡住 | 协程时序或按钮状态异常 | 按 `Numpad 7/8/9` 重置对应炮管 |
+| 笔记本按键无反应 | 无小键盘 | 用 `Ctrl+数字键` 替代（见快捷键表） |
+| 构建刷 `NU1701` 警告 | CSCore 框架版本不匹配 | 在 `CustomRecords.csproj` 添加 `<NoWarn>NU1701</NoWarn>` |
+| 炮管卡 `WaitLoading` | 推药杆握持太短未推入 | 已修复（1.5s 长握持），更新到最新版 |
 
 ## 贡献
 
