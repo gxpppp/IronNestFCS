@@ -1,4 +1,7 @@
-# IronNestFCS
+# IronNestFCS Enhanced Edition
+
+> **基于 [svr2kos2/IronNestFCS](https://github.com/svr2kos2/IronNestFCS) v1.0.5 的增强修改版**
+> 原作者：[svr2kos2](https://github.com/svr2kos2) · MIT License
 
 [Demo Video](https://www.bilibili.com/video/BV1xc7F6WEET/)
 
