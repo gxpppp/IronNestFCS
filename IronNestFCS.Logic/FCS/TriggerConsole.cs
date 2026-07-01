@@ -27,7 +27,8 @@ public class TriggerConsole {
         }
 
         if (buttons.Count != 5) {
-            MelonLogger.Error("Can't bind trigger console.");
+            MelonLogger.Error("[FCS] TriggerConsole: expected 5 check switches, found " + buttons.Count);
+            return false;
         }
         _taskCheck = buttons[0];
         _bulletCheck = buttons[1];

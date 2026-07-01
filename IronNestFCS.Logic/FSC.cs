@@ -68,6 +68,8 @@ public class FSC
 
     // 正在运行的协程句柄。Dispose 时全部停掉，避免热重载后旧 ALC 的协程继续执行导致崩溃。
     private readonly List<(object handle, LeftRight gun)> _runningCoroutines = new();
+    // 超时监控协程独立追踪（不能被误杀）
+    private object? _monitorHandle;
     // 进度超时监控
     private float _leftProgressTime;
     private float _rightProgressTime;
@@ -97,7 +99,7 @@ public class FSC
                   && Turret.TryBind()
                   && TriggerConsole.TryBind();
         MelonLogger.Msg("[FCS] Initialize: " + (IsBound ? "success" : "failed"));
-        _runningCoroutines.Add((MelonCoroutines.Start(ProgressTimeoutMonitor()), LeftRight.Left)); // 监控用左槽位无关
+        _monitorHandle = MelonCoroutines.Start(ProgressTimeoutMonitor());
         return IsBound;
     }
 
@@ -175,6 +177,7 @@ public class FSC
     public void Dispose()
     {
         // 停掉所有未完成的协程，否则热重载后旧 ALC 的协程仍会被 Unity 驱动 → 崩溃。
+        if (_monitorHandle != null) { try { MelonCoroutines.Stop(_monitorHandle); } catch { } }
         foreach (var (handle, _) in _runningCoroutines) {
             try { MelonCoroutines.Stop(handle); }
             catch (Exception ex) { MelonLogger.Error($"[FCS] Stop coroutines failed: {ex}"); }
@@ -190,16 +193,6 @@ public class FSC
         try { _harmony?.UnpatchSelf(); }
         catch (Exception ex) { MelonLogger.Error($"[FCS] UnpatchSelf failed: {ex}"); }
         _harmony = null;
-    }
-
-    public IEnumerator ExposeAllEntities() {
-        while (true) {
-            foreach (var m in MapTable.GetAllFireMissionEntities()) {
-                m.GetComponent<Image>().enabled = true;
-            }
-
-            yield return new WaitForSeconds(1f);
-        }
     }
 
     /// <summary>
@@ -269,12 +262,22 @@ public class FSC
         // ===== 检查炮管：膛内弹种不对则退弹清膛 =====
         string? chambered = gunSys.BulletInChamber();
 
-        if (chambered != null && chambered != task.bulletType.ToString())
+        if (chambered != null && chambered != task.bulletType.ToString().ToUpper())
         {
             MelonLogger.Msg($"[FCS] {leftRight}: eject {chambered} (need {task.bulletType})");
             task.progress = Progress.DumpingWrongShell;
             MarkProgress(leftRight, Progress.DumpingWrongShell);
             yield return gunSys.EjectChamberedShell();
+            // 验证退弹成功
+            if (gunSys.BulletInChamber() != null) {
+                MelonLogger.Error($"[FCS] {leftRight}: eject failed, chamber still loaded");
+                task.progress = Progress.Failed;
+                MarkProgress(leftRight, Progress.Failed);
+                turret.Canceled = true;
+                ReleaseTurretOnce(turret);
+                ReleaseSlot(leftRight);
+                yield break;
+            }
         }
 
         // ===== 临界区 1：解算（无论如何都要算仰角）=====
@@ -315,11 +318,16 @@ public class FSC
                 }
                 else {
                     yield return _purchaseDeck.BuyShell(task.bulletType, leftRight);
-                    // 确认采购到位：等弹仓出现目标弹种，最多 3 秒
                     float waited = 0f;
                     while (!gunSys.HaveBulletInCylinder(task.bulletType) && waited < 3f) {
                         yield return new WaitForSeconds(0.5f);
                         waited += 0.5f;
+                    }
+                    if (!gunSys.HaveBulletInCylinder(task.bulletType)) {
+                        MelonLogger.Error($"[FCS] {leftRight}: BuyShell timeout");
+                        task.progress = Progress.Failed;
+                        MarkProgress(leftRight, Progress.Failed);
+                        viable = false;
                     }
                 }
             }
@@ -347,8 +355,10 @@ public class FSC
         yield return gunSys.LoadPowder(powderCount);
         task.progress = Progress.WaitLoading;
         MarkProgress(leftRight, Progress.WaitLoading);
-        while (!gunSys.CanFire()) {
+        float wlWaited = 0f;
+        while (!gunSys.CanFire() && wlWaited < 30f) {
             yield return new WaitForSeconds(1f);
+            wlWaited += 1f;
         }
 
         // ===== 锁外：升仰角 =====
@@ -359,8 +369,10 @@ public class FSC
         // ===== 临界区 2：击发 =====
         task.progress = Progress.PressingConfirm;
         MarkProgress(leftRight, Progress.PressingConfirm);
-        while (!turret.Ready) {
+        float trWaited = 0f;
+        while (!turret.Ready && trWaited < 30f) {
             yield return null;
+            trWaited += Time.deltaTime;
         }
         try {
             yield return TriggerConsole.ConfirmTask();
@@ -386,6 +398,8 @@ public class FSC
         MarkProgress(leftRight, Progress.Finished);
         _sceneInteractor.TaskFinished(task);
         ReleaseSlot(leftRight);
+        // 清理已完成协程引用（保留监控协程）
+        _runningCoroutines.RemoveAll(t => object.ReferenceEquals(t.handle, null) || t.gun == leftRight);
     }
 
     /// <summary>

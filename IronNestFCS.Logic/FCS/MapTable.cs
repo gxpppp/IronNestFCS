@@ -84,7 +84,7 @@ public class MapTable {
             return null;
         }
 
-        if (index > artilleries.Count) {
+        if (index >= artilleries.Count || !artilleries.ContainsKey(index)) {
             MelonLogger.Error($"[FCS] GetMarkTarget: index {index} out of range, artillery count: {artilleries.Count}");
             return null;
         }

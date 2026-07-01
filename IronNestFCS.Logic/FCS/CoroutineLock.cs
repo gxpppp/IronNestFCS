@@ -17,11 +17,12 @@ namespace IronNestFCS.Logic.FCS;
 public sealed class CoroutineLock {
     private bool _held;
 
-    /// <summary>等待直到拿到锁。拿到后立即占用，调用方负责在 finally 里 Release。</summary>
-    public IEnumerator Acquire() {
-        // 每帧重试一次。持锁方在主线程推进，释放后下一帧本协程即可抢到。
-        while (_held) {
+    /// <summary>等待直到拿到锁。默认 30s 超时防死锁。</summary>
+    public IEnumerator Acquire(float timeout = 30f) {
+        float waited = 0f;
+        while (_held && waited < timeout) {
             yield return null;
+            waited += UnityEngine.Time.deltaTime;
         }
         _held = true;
     }

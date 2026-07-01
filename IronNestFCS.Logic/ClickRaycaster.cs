@@ -18,6 +18,7 @@ namespace IronNestFCS.Logic;
 public class ClickRaycaster
 {
     private readonly List<(Collider collider, System.Action onClick)> targets = new();
+    private int _updateCount;
 
     /// <summary>注册一个可点击 Collider 及其点击回调。</summary>
     public void Register(Collider collider, System.Action onClick)
@@ -29,6 +30,10 @@ public class ClickRaycaster
     /// <summary>每帧调用。检测左键点击并派发。</summary>
     public void Update()
     {
+        // 每 60 帧清理一次已销毁的 Collider
+        if (++_updateCount % 60 == 0)
+            targets.RemoveAll(t => t.collider == null);
+
         var mouse = Mouse.current;
         if (mouse == null || !mouse.leftButton.wasPressedThisFrame)
             return;

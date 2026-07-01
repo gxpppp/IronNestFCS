@@ -77,14 +77,15 @@ public class GunSystem {
     }
     
     public bool CanFire() {
-        return gunController.CanFire;
+        return gunController != null && gunController.CanFire;
     }
 
     public IEnumerator SetElevation(float elevation) {
+        if (elevationLever == null) { yield break; }
         elevationLever.SetSliderValue(elevation);
         yield return new WaitForSeconds(0.1f);
         float waited = 0f;
-        while (Mathf.Abs(gunController.ElevationErrorDeg) > 0.1f && waited < 30f) {
+        while (gunController != null && Mathf.Abs(gunController.ElevationErrorDeg) > 0.1f && waited < 30f) {
             elevationLever.SetSliderValue(elevation);
             yield return new WaitForSeconds(1f);
             waited += 1f;
@@ -92,7 +93,7 @@ public class GunSystem {
     }
     
     public string? BulletInChamber() {
-        return gunController?.ChamberedShellBlueprint?.shellDefinition?.ShellId;
+        return gunController?.ChamberedShellBlueprint?.shellDefinition?.ShellId?.ToUpper();
     }
     
     public bool IsChamberEmpty() {
@@ -103,7 +104,7 @@ public class GunSystem {
         bullets.Clear();
         if (shellSelector == null) return;
         foreach (var shell in shellSelector.bullets) {
-            bullets.Add(shell?.GetComponent<ShellBlueprint>()?.shellDefinition?.ShellId);
+            bullets.Add(shell?.GetComponent<ShellBlueprint>()?.shellDefinition?.ShellId?.ToUpper());
         }
     }
 
@@ -112,14 +113,10 @@ public class GunSystem {
         nextBulletButton.OnClickDown();
     }
     
-    /// <summary>
-    /// 装填指定弹种：先把弹仓转到目标弹，再按装填。转弹仓每步之间要等 1 秒
-    /// （游戏有转动动画/物理）。返回 IEnumerator，调用方用 yield return 等待它跑完。
-    /// 必须走协程而非 async：continuation 要留在主线程才能安全访问 IL2CPP 对象。
-    /// </summary>
     public IEnumerator LoadBullet(BulletType type) {
         RefreshBullets();
-        var index = bullets.IndexOf(type.ToString());
+        var typeStr = type.ToString().ToUpper();
+        var index = bullets.IndexOf(typeStr);
         if (index == -1) {
             MelonLogger.Error($"[FCS] GunSystem {_surfix}: " +
                               $"No {type} available in cylinder, current bullets: {string.Join(", ", bullets)}");
@@ -127,20 +124,21 @@ public class GunSystem {
         }
         
         for (var i = 0; i < bullets.Count; ++i) {
-            if (bullets[0] == type.ToString()) {
+            if (bullets[0] == typeStr) {
                 break;
             };
             NextBullet();
             yield return new WaitForSeconds(1.5f);
             RefreshBullets();
         }
-        if (bullets[0] != type.ToString()) {
+        if (bullets[0] != typeStr) {
             MelonLogger.Error($"[FCS] GunSystem {_surfix}: Can't find {type} after rotation, " +
                               $"current: {string.Join(", ", bullets)}");
             yield break;
         }
         yield return FcsSceneInteractor.WaitAndClick(loadBulletButton!);
-        yield return GameStateWatcher.WaitForReloadComplete(gunController);
+        if (gunController != null)
+            yield return GameStateWatcher.WaitForReloadComplete(gunController);
     }
 
     private IEnumerator SelectPowder(int count) {
@@ -171,7 +169,6 @@ public class GunSystem {
     }
 
     public IEnumerator LoadPowder(int count) {
-        // 推药杆引用可能因 reload 重建而失效，重新绑定
         if (loadPowderButton == null || loadPowderButton.gameObject == null) {
             var gunSystem = GameObject.Find("Gun System " + _surfix)?.transform;
             var reloadingConsole = gunSystem?.Find("--Reloading Console");
@@ -184,10 +181,11 @@ public class GunSystem {
         }
         yield return SelectPowder(count);
         yield return FcsSceneInteractor.WaitAndClick(loadPowderButton);
-        yield return GameStateWatcher.WaitForReloadComplete(gunController);
+        if (gunController != null)
+            yield return GameStateWatcher.WaitForReloadComplete(gunController);
     }
 
-    /// <summary>直接退弹（不发射，用 ArtilleryReloadController 弹出膛内弹）</summary>
+    /// <summary>直接退弹（不发射），失败则回退到旧 dump 方式</summary>
     public IEnumerator EjectChamberedShell()
     {
         var gunSystem = GameObject.Find("Gun System " + _surfix)?.transform;
@@ -196,19 +194,28 @@ public class GunSystem {
         {
             rc.EjectChamberedShell();
             yield return new WaitForSeconds(1f);
-            yield return GameStateWatcher.WaitForReloadComplete(gunController);
+            if (gunController != null)
+                yield return GameStateWatcher.WaitForReloadComplete(gunController);
+        }
+        else
+        {
+            // fallback: 装 1 包药 → 平射清膛
+            MelonLogger.Msg($"[GunSystem] Eject not available, fallback to dump fire");
+            yield return LoadPowder(1);
+            while (!CanFire() && gunController != null) yield return new WaitForSeconds(1f);
         }
     }
 
     /// <summary>直接击发（用 GunController.RequestFire 代替 spinner）</summary>
     public void RequestFire()
     {
-        gunController.RequestFire();
+        if (gunController != null)
+            gunController.RequestFire();
     }
 
     public bool HaveBulletInCylinder(BulletType type) {
         RefreshBullets();
-        return bullets.Contains(type.ToString());
+        return bullets.Contains(type.ToString().ToUpper());
     }
     
     public bool HaveEmptyShellInCylinder() {
@@ -217,25 +224,30 @@ public class GunSystem {
     }
 
     public IEnumerator WaitBackToIdle() {
-        while (Mathf.Abs(gunController.CurrentElevationSpeed) > 0.01f) {
+        float waited = 0f;
+        while (gunController != null && Mathf.Abs(gunController.CurrentElevationSpeed) > 0.01f && waited < 30f) {
             yield return new WaitForSeconds(0.1f);
+            waited += 0.1f;
         }
-        yield return GameStateWatcher.WaitForReloadComplete(gunController, 20f);
-        // 确保后塞锁紧
-        if (!gunController.ExternalReloadLoweringLocked) {
-            gunController.SetExternalReloadLoweringLocked(true);
-            yield return new WaitForSeconds(0.5f);
+        if (gunController != null) {
+            yield return GameStateWatcher.WaitForReloadComplete(gunController, 20f);
+            if (!gunController.ExternalReloadLoweringLocked) {
+                gunController.SetExternalReloadLoweringLocked(true);
+                yield return new WaitForSeconds(0.5f);
+            }
         }
     }
 
     public IEnumerator WaitFire() {
-        while (!gunController.IsReloading) {
+        float waited = 0f;
+        while (gunController != null && !gunController.IsReloading && waited < 30f) {
             yield return new WaitForSeconds(0.1f);
+            waited += 0.1f;
         }
     }
     
     public int RemainingCharges() {
-        return (int)remainingCharges.CurrentNumber;
+        return remainingCharges != null ? (int)remainingCharges.CurrentNumber : 0;
     }
 
     /// <summary>炮管当前状态快照</summary>
@@ -253,10 +265,10 @@ public class GunSystem {
         RefreshBullets();
         return new GunState {
             ChamberedShell = BulletInChamber(),
-            CanFire = gunController.CanFire,
-            PendingReload = gunController.IsReloading,
-            ElevationVelocity = gunController.CurrentElevationSpeed,
-            CurrentElevation = gunController.CurrentElevation,
+            CanFire = CanFire(),
+            PendingReload = gunController != null && gunController.IsReloading,
+            ElevationVelocity = gunController != null ? gunController.CurrentElevationSpeed : 0f,
+            CurrentElevation = gunController != null ? gunController.CurrentElevation : 0f,
             ChargesRemaining = RemainingCharges(),
             CylinderBullets = bullets.Where(b => b != null).ToArray()!
         };

@@ -55,6 +55,7 @@ public class FcsModule : IFcsModule
                         fcs.FireAtWorldPos(swept.Count, unit.WorldPos);
                 }
             }
+            if (swept.Count > 200) swept.Clear();
         }
 
         var kb = Keyboard.current;
@@ -94,18 +95,23 @@ public class FcsModule : IFcsModule
     {
         var all = GameObject.FindObjectsOfType<GameObject>();
         MelonLogger.Msg($"[Valve] Setting all valves to {value}...");
-        int done = 0;
-        foreach (var leak in all)
+        // 先缓存所有 DialInteractable 引用
+        var dials = new List<(DialInteractable di, Vector3 pos)>();
+        foreach (var go in all)
         {
-            if (leak == null || !leak.name.ToLower().Contains("steam leak")) continue;
+            if (go == null) continue;
+            var di = go.GetComponent<DialInteractable>();
+            if (di != null) dials.Add((di, go.transform.position));
+        }
+        int done = 0;
+        foreach (var go in all)
+        {
+            if (go == null || !go.name.ToLower().Contains("steam leak")) continue;
             DialInteractable? nearestDi = null;
             float minDist = float.MaxValue;
-            foreach (var go in all)
+            foreach (var (di, pos) in dials)
             {
-                if (go == null) continue;
-                var di = go.GetComponent<DialInteractable>();
-                if (di == null) continue;
-                var d = (go.transform.position - leak.transform.position).magnitude;
+                var d = (pos - go.transform.position).magnitude;
                 if (d < minDist) { minDist = d; nearestDi = di; }
             }
             if (nearestDi == null) continue;

@@ -27,8 +27,10 @@ public class Turret {
 
         _turret.DesiredRotation = -angle;
         yield return new WaitForSeconds(1f);
-        while (_turret.rotationVelocity != 0) {
+        float waited = 0f;
+        while (_turret.rotationVelocity != 0 && waited < 30f) {
             yield return new WaitForSeconds(1f);
+            waited += 1f;
         }
     }
     
