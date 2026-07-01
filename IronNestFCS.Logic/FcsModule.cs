@@ -78,7 +78,8 @@ public class FcsModule : IFcsModule
             if (radar != null) radar.AutoPlaceMarkers = !radar.AutoPlaceMarkers;
             return;
         }
-        if (kb.numpadPlusKey.wasPressedThisFrame) { TightenAllValves(); return; }
+        if (kb.numpadMinusKey.wasPressedThisFrame) { AdjustAllValves(0f); return; }
+        if (kb.numpadPlusKey.wasPressedThisFrame) { AdjustAllValves(999f); return; }
         if (kb.numpad7Key.wasPressedThisFrame || (ctrl && kb.digit7Key.wasPressedThisFrame)) { fcs.AbortGun(LeftRight.Left); return; }
         if (kb.numpad8Key.wasPressedThisFrame || (ctrl && kb.digit8Key.wasPressedThisFrame)) { fcs.AbortGun(LeftRight.Right); return; }
         if (kb.numpad9Key.wasPressedThisFrame || (ctrl && kb.digit9Key.wasPressedThisFrame)) { fcs.AbortGun(LeftRight.Left); fcs.AbortGun(LeftRight.Right); return; }
@@ -88,16 +89,15 @@ public class FcsModule : IFcsModule
         else if (kb.numpad4Key.wasPressedThisFrame || (ctrl && kb.digit4Key.wasPressedThisFrame)) fcs.FireTarget(4);
     }
 
-    /// <summary>NumpadPlus: 拧紧所有蒸汽阀门（设 DialInteractable 值为 1）</summary>
-    private static void TightenAllValves()
+    /// <summary>NumpadPlus/Minus: 控制所有蒸汽阀门开/关</summary>
+    private static void AdjustAllValves(float value)
     {
         var all = GameObject.FindObjectsOfType<GameObject>();
-        MelonLogger.Msg("[Valve] Tightening steam valves...");
-        int closed = 0;
+        MelonLogger.Msg($"[Valve] Setting all valves to {value}...");
+        int done = 0;
         foreach (var leak in all)
         {
             if (leak == null || !leak.name.ToLower().Contains("steam leak")) continue;
-            // 找离 Steam leak 最近的 DialInteractable
             DialInteractable? nearestDi = null;
             float minDist = float.MaxValue;
             foreach (var go in all)
@@ -109,12 +109,10 @@ public class FcsModule : IFcsModule
                 if (d < minDist) { minDist = d; nearestDi = di; }
             }
             if (nearestDi == null) continue;
-            // 拧紧：设 dial 值为 0（阀门关闭位置）
-            nearestDi.SetDialValue(0f);
-            closed++;
-            MelonLogger.Msg($"[Valve] {nearestDi.name} dial set to 1 near {leak.name} (dist={minDist:F2})");
+            nearestDi.SetDialValue(value);
+            done++;
         }
-        MelonLogger.Msg($"[Valve] Tightened {closed} valves.");
+        MelonLogger.Msg($"[Valve] Set {done} valves to {value}.");
     }
 
     private static int GetPriority(EntityLocation? loc)

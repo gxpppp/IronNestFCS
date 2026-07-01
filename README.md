@@ -35,7 +35,8 @@
 | `Numpad 0` | `Ctrl+0` | 切换扫荡（面板 `[Sweep ON]`，强制自动标点） |
 | `Numpad 1-4` | `Ctrl+1-4` | 击发 T1-T4 |
 | `Numpad 5` | `Ctrl+5` | 切换自动/手动标点 |
-| `Numpad +` | — | 一键拧紧所有蒸汽阀门 |
+| `Numpad +` | — | 一键拧开所有蒸汽阀门（最大） |
+| `Numpad -` | — | 一键拧紧所有蒸汽阀门（关闭） |
 | `Numpad 7` | `Ctrl+7` | 重置左炮 |
 | `Numpad 8` | `Ctrl+8` | 重置右炮 |
 | `Numpad 9` | `Ctrl+9` | 重置双炮 |
