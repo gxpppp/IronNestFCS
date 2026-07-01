@@ -19,7 +19,6 @@ public class PurchaseDeck {
         var requisitionConsole = GameObject.Find("Requisition Console").transform;
         var cards = requisitionConsole.GetComponentsInChildren<PunchcardRuntime>();
         foreach (var card in cards) {
-            MelonLogger.Msg($"[FCS] PurchaseDeck: Found card {card.CurrentDefinition.ID}");
             switch (card.CurrentDefinition.ID) {
                 case "HEShell":
                     _heCard = card.transform;

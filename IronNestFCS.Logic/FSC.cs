@@ -337,6 +337,12 @@ public class FSC
                 }
                 else {
                     yield return _purchaseDeck.BuyShell(task.bulletType, leftRight);
+                    // 确认采购到位：等弹仓出现目标弹种，最多 3 秒
+                    float waited = 0f;
+                    while (!gunSys.HaveBulletInCylinder(task.bulletType) && waited < 3f) {
+                        yield return new WaitForSeconds(0.5f);
+                        waited += 0.5f;
+                    }
                 }
             }
         }

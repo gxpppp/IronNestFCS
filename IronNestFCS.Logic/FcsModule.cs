@@ -58,7 +58,9 @@ public class FcsModule : IFcsModule
         if (kb == null || !fcs.IsBound)
             return;
 
-        if (kb.numpad0Key.wasPressedThisFrame)
+        bool ctrl = kb.ctrlKey.isPressed;
+
+        if (kb.numpad0Key.wasPressedThisFrame || (ctrl && kb.digit0Key.wasPressedThisFrame))
         {
             autoSweep = !autoSweep;
             if (autoSweep)
@@ -68,18 +70,18 @@ public class FcsModule : IFcsModule
             }
             return;
         }
-        if (kb.numpad5Key.wasPressedThisFrame)
+        if (kb.numpad5Key.wasPressedThisFrame || (ctrl && kb.digit5Key.wasPressedThisFrame))
         {
             if (radar != null) radar.AutoPlaceMarkers = !radar.AutoPlaceMarkers;
             return;
         }
-        if (kb.numpad7Key.wasPressedThisFrame) { fcs.AbortGun(LeftRight.Left); return; }
-        if (kb.numpad8Key.wasPressedThisFrame) { fcs.AbortGun(LeftRight.Right); return; }
-        if (kb.numpad9Key.wasPressedThisFrame) { fcs.AbortGun(LeftRight.Left); fcs.AbortGun(LeftRight.Right); return; }
-        if (kb.numpad1Key.wasPressedThisFrame) fcs.FireTarget(1);
-        else if (kb.numpad2Key.wasPressedThisFrame) fcs.FireTarget(2);
-        else if (kb.numpad3Key.wasPressedThisFrame) fcs.FireTarget(3);
-        else if (kb.numpad4Key.wasPressedThisFrame) fcs.FireTarget(4);
+        if (kb.numpad7Key.wasPressedThisFrame || (ctrl && kb.digit7Key.wasPressedThisFrame)) { fcs.AbortGun(LeftRight.Left); return; }
+        if (kb.numpad8Key.wasPressedThisFrame || (ctrl && kb.digit8Key.wasPressedThisFrame)) { fcs.AbortGun(LeftRight.Right); return; }
+        if (kb.numpad9Key.wasPressedThisFrame || (ctrl && kb.digit9Key.wasPressedThisFrame)) { fcs.AbortGun(LeftRight.Left); fcs.AbortGun(LeftRight.Right); return; }
+        if (kb.numpad1Key.wasPressedThisFrame || (ctrl && kb.digit1Key.wasPressedThisFrame)) fcs.FireTarget(1);
+        else if (kb.numpad2Key.wasPressedThisFrame || (ctrl && kb.digit2Key.wasPressedThisFrame)) fcs.FireTarget(2);
+        else if (kb.numpad3Key.wasPressedThisFrame || (ctrl && kb.digit3Key.wasPressedThisFrame)) fcs.FireTarget(3);
+        else if (kb.numpad4Key.wasPressedThisFrame || (ctrl && kb.digit4Key.wasPressedThisFrame)) fcs.FireTarget(4);
     }
 
     /// <summary>返回优先值：4=★≥3/FDC/火炮 3=★≥1/装甲 2=Hostile/Target 1=其余</summary>

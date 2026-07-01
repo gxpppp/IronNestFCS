@@ -103,7 +103,6 @@ public class GunSystem {
         foreach (var shell in shellSelector.bullets) {
             bullets.Add(shell?.GetComponent<ShellBlueprint>()?.shellDefinition?.ShellId);
         }
-        MelonLogger.Msg($"[FCS] GunSystem {_surfix}: Cylinder bullets: {string.Join(", ", bullets)}");
     }
 
     public void NextBullet() {
