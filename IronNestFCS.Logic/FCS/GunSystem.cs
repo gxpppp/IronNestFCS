@@ -83,9 +83,11 @@ public class GunSystem {
     public IEnumerator SetElevation(float elevation) {
         elevationLever.SetSliderValue(elevation);
         yield return new WaitForSeconds(0.1f);
-        while (gunController.CurrentElevation != elevation) {
+        float waited = 0f;
+        while (Mathf.Abs(gunController.ElevationErrorDeg) > 0.1f && waited < 30f) {
             elevationLever.SetSliderValue(elevation);
             yield return new WaitForSeconds(1f);
+            waited += 1f;
         }
     }
     
@@ -194,14 +196,14 @@ public class GunSystem {
     }
 
     public IEnumerator WaitBackToIdle() {
-        while (gunController.elevationChangeVelocity != 0) {
+        while (Mathf.Abs(gunController.CurrentElevationSpeed) > 0.01f) {
             yield return new WaitForSeconds(0.1f);
         }
         yield return new WaitForSeconds(13);
     }
 
     public IEnumerator WaitFire() {
-        while (!gunController.pendingReload) {
+        while (!gunController.IsReloading) {
             yield return new WaitForSeconds(0.1f);
         }
     }
@@ -226,8 +228,8 @@ public class GunSystem {
         return new GunState {
             ChamberedShell = BulletInChamber(),
             CanFire = gunController.CanFire,
-            PendingReload = gunController.pendingReload,
-            ElevationVelocity = gunController.elevationChangeVelocity,
+            PendingReload = gunController.IsReloading,
+            ElevationVelocity = gunController.CurrentElevationSpeed,
             CurrentElevation = gunController.CurrentElevation,
             ChargesRemaining = RemainingCharges(),
             CylinderBullets = bullets.Where(b => b != null).ToArray()!

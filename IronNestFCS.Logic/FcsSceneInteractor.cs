@@ -267,8 +267,10 @@ public class FcsSceneInteractor {
             MelonLogger.Error("[FCS] WaitAndClick: button is null");
             yield break;
         }
-        while (button.isActive == false || button.nextAllowedClickTime > Time.realtimeSinceStartup) {
+        float waited = 0f;
+        while ((button.isActive == false || button.nextAllowedClickTime > Time.realtimeSinceStartup) && waited < 3f) {
             yield return new WaitForSeconds(0.1f);
+            waited += 0.1f;
         }
         yield return new WaitForSeconds(0.1f);
         button.OnClickDown();
